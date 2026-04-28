@@ -47,7 +47,7 @@ cat > /root/.openclaw/openclaw.json <<EOF
       }
     }
   },
-  "agents": { "defaults": { "model": { "primary": "nvidia/$MODEL" } } },
+  "agents": { "defaults": { "model": { "primary": "$MODEL" } } }
   "commands": {
     "restart": true
   },
@@ -194,11 +194,11 @@ fi
 openclaw doctor --fix
 
 # 启动定时备份
-# (while true; do
-#   sleep 3600
-#   echo ">>> Running scheduled backup..."
-#   ./sync.sh backup
-# done) &
+(while true; do
+  sleep 3600
+  echo ">>> Running scheduled backup..."
+  ./sync.sh backup
+done) &
 
 nginx -t
 if [ $? -ne 0 ]; then
