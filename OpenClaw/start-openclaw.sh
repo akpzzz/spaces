@@ -12,27 +12,97 @@ echo "nameserver 8.8.8.8" >> /etc/resolv.conf
 echo "nameserver 8.8.4.4" >> /etc/resolv.conf
 echo ">>> DNS fixed."
 
-# ── 3. Chromium ───────────────────────────────────────────────
+# ── 3. Chromium 安装（修复版）────────────────────────────────
 export PLAYWRIGHT_BROWSERS_PATH=/root/.openclaw/browsers
+
+# 方法1：使用 openclaw 自带的 playwright
+install_chromium_via_openclaw() {
+    echo ">>> Trying to install Chromium via openclaw..."
+    
+    # 查找 openclaw 安装目录
+    OPENCLAW_PATH=$(which openclaw 2>/dev/null)
+    if [ -n "$OPENCLAW_PATH" ]; then
+        # 尝试使用 openclaw 命令安装浏览器
+        if openclaw browser install 2>/dev/null; then
+            echo ">>> Chromium installed via openclaw browser install"
+            return 0
+        fi
+    fi
+    
+    # 方法2：直接使用 npx playwright 安装
+    echo ">>> Trying npx playwright install..."
+    if npx playwright install chromium --with-deps 2>/dev/null; then
+        echo ">>> Chromium installed via npx playwright"
+        return 0
+    fi
+    
+    # 方法3：使用全局 playwright
+    echo ">>> Trying global playwright install..."
+    if playwright install chromium --with-deps 2>/dev/null; then
+        echo ">>> Chromium installed via global playwright"
+        return 0
+    fi
+    
+    # 方法4：手动查找并安装
+    echo ">>> Trying manual playwright-core install..."
+    NPM_GLOBAL_ROOT=$(npm root -g 2>/dev/null)
+    if [ -n "$NPM_GLOBAL_ROOT" ]; then
+        PLAYWRIGHT_CLI="$NPM_GLOBAL_ROOT/playwright-core/cli.js"
+        if [ -f "$PLAYWRIGHT_CLI" ]; then
+            if node "$PLAYWRIGHT_CLI" install chromium; then
+                echo ">>> Chromium installed via playwright-core cli.js"
+                return 0
+            fi
+        fi
+    fi
+    
+    # 方法5：使用系统包管理器安装（备用方案）
+    echo ">>> Trying system package manager install..."
+    if command -v apt-get &>/dev/null; then
+        apt-get update && apt-get install -y chromium-browser || apt-get install -y chromium
+        if command -v chromium-browser &>/dev/null || command -v chromium &>/dev/null; then
+            echo ">>> Chromium installed via apt"
+            # 创建软链接到 playwright 期望的路径
+            CHROME_PATH=$(which chromium-browser 2>/dev/null || which chromium 2>/dev/null)
+            if [ -n "$CHROME_PATH" ]; then
+                mkdir -p /root/.openclaw/browsers/chrome-linux
+                ln -sf "$CHROME_PATH" /root/.openclaw/browsers/chrome-linux/chrome 2>/dev/null || true
+            fi
+            return 0
+        fi
+    fi
+    
+    echo ">>> WARN: All Chromium installation methods failed"
+    return 1
+}
+
+# 检查 Chromium 是否已存在
 CHROMIUM_PATH=$(find /root/.openclaw/browsers -name "chrome" -type f 2>/dev/null | head -1)
 
 if [ -z "$CHROMIUM_PATH" ]; then
-    echo ">>> Installing Chromium..."
-    OPENCLAW_NM=$(npm root -g 2>/dev/null)/openclaw/node_modules/playwright-core/cli.js
-    if timeout 180 node "$OPENCLAW_NM" install chromium; then
-        echo ">>> Chromium OK"
-    else
-        echo ">>> WARN: Chromium install failed"
-    fi
+    echo ">>> Chromium not found, installing..."
+    install_chromium_via_openclaw
+    # 重新查找
     CHROMIUM_PATH=$(find /root/.openclaw/browsers -name "chrome" -type f 2>/dev/null | head -1)
+    if [ -n "$CHROMIUM_PATH" ]; then
+        echo ">>> Chromium installed successfully at: $CHROMIUM_PATH"
+    else
+        echo ">>> WARN: Chromium installation failed, browser features may not work"
+    fi
 else
     echo ">>> Chromium found: $CHROMIUM_PATH"
+fi
+
+# 设置 PLAYWRIGHT 环境变量
+if [ -n "$CHROMIUM_PATH" ]; then
+    export PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH="$CHROMIUM_PATH"
+    echo ">>> PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH set to: $CHROMIUM_PATH"
 fi
 
 # 4. 处理 API 地址
 CLEAN_BASE=$(echo "$OPENAI_API_BASE" | sed "s|/chat/completions||g" | sed "s|/v1/|/v1|g" | sed "s|/v1$|/v1|g")
 
-# 4. 生成配置文件
+# 5. 生成配置文件（修复 JSON 语法错误）
 cat > /root/.openclaw/openclaw.json <<EOF
 {
   "models": {
@@ -47,22 +117,31 @@ cat > /root/.openclaw/openclaw.json <<EOF
       }
     }
   },
-  "agents": { "defaults": { "model": { "primary": "$MODEL" } } }
+  "agents": {
+    "defaults": {
+      "model": {
+        "primary": "$MODEL"
+      }
+    }
+  },
   "commands": {
     "restart": true
   },
   "tools": {
-      "exec": {
-        "ask": "off",
-        "security": "full"
-      }
-    },
+    "exec": {
+      "ask": "off",
+      "security": "full"
+    }
+  },
   "gateway": {
     "mode": "local",
     "bind": "lan",
     "port": 7861,
     "trustedProxies": ["0.0.0.0/0"],
-    "auth": { "mode": "token", "token": "$OPENCLAW_GATEWAY_PASSWORD" },
+    "auth": {
+      "mode": "token",
+      "token": "$OPENCLAW_GATEWAY_PASSWORD"
+    },
     "controlUi": {
       "enabled": true,
       "allowInsecureAuth": true,
@@ -73,22 +152,6 @@ cat > /root/.openclaw/openclaw.json <<EOF
   }
 }
 EOF
-
- # TG设置示例  抱脸不支持TG的API 需要设置apiRoot为TG代理网址
- # "channels": {
- #    "telegram": {
- #      "enabled": true,
- #      "botToken": "机器人Token",
- #      "dmPolicy": "pairing",
- #      "apiRoot": "https://xxxxx.com",
- #      "groups": { "*": { "requireMention": true } },
- #      "webhookUrl": "https://抱脸用户名-抱脸空间名.hf.space/telegram/webhook",
- #      "webhookSecret": "$OPENCLAW_GATEWAY_PASSWORD",
- #      "webhookPath": "/telegram/webhook",
- #      "webhookHost": "0.0.0.0",
- #      "webhookPort": 8787,
- #    }
- #  }
 
 # 创建nginx配置
 cat > /etc/nginx/nginx.conf <<'EOF'
